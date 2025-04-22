@@ -67,10 +67,7 @@ class LinuxDoBrowser:
         self.password = password
         self.pw = sync_playwright().start()
         self.browser = self.pw.firefox.launch(headless=True, timeout=30000)
-        windows_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0"
-        self.context = self.browser.new_context(
-            user_agent=windows_user_agent
-        )
+        self.context = self.browser.new_context()
         self.page = self.context.new_page()
         self.page.goto(HOME_URL)
 
