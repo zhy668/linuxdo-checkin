@@ -176,7 +176,7 @@ class LinuxDoBrowser:
 
             topic_links = [topic.get_attribute("href") for topic in topic_elements]
             target_topic_url = random.choice(topic_links)
-            full_topic_url = HOME_URL + target_topic_url
+            full_topic_url = HOME_URL.rstrip('/') + '/' + target_topic_url.lstrip('/')
             logger.info(f"选择帖子进行回复: {full_topic_url}")
 
             page.goto(full_topic_url)
@@ -209,7 +209,14 @@ class LinuxDoBrowser:
                 submit_button_selector = 'button.btn.btn-primary.create'
                 submit_button = page.locator(submit_button_selector).first
                 submit_button.click()
-                logger.success(f"回复成功: {reply_content}")
+                try:
+                    page.wait_for_selector(textarea_selector, state='hidden', timeout=5000)
+                    logger.success(f"回复成功: {reply_content}")
+                except Exception:
+                    logger.warning("回复可能未成功提交，再次尝试点击提交按钮")
+                    submit_button.click()
+                    time.sleep(5) # 多等待一会确保提交
+                
                 time.sleep(random.uniform(3, 5)) # 等待提交完成
 
             else:
