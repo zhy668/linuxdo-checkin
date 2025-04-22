@@ -11,7 +11,9 @@ import requests
 from loguru import logger
 from playwright.sync_api import sync_playwright
 from tabulate import tabulate
+#from dotenv import load_dotenv
 
+#load_dotenv()
 
 def retry_decorator(retries=3):
     def decorator(func):
@@ -85,7 +87,8 @@ class LinuxDoBrowser:
     def click_one_topic(self, topic_url):
         page = self.context.new_page()
         page.goto(HOME_URL + topic_url)
-        if random.random() < 0.3:  # 0.3 * 30 = 9
+        # 随机点赞，概率降低到 15%
+        if random.random() < 0.15:
             self.click_like(page)
         self.browse_post(page)
         page.close()
@@ -114,7 +117,7 @@ class LinuxDoBrowser:
                 break
 
             # 动态随机等待
-            wait_time = random.uniform(2, 4)  # 随机等待 2-4 秒
+            wait_time = random.uniform(2, 5)  # 随机等待 2-5 秒
             logger.info(f"等待 {wait_time:.2f} 秒...")
             time.sleep(wait_time)
 
@@ -122,7 +125,8 @@ class LinuxDoBrowser:
         if not self.login():
             logger.error("登录失败，程序终止")
             sys.exit(1)  # 使用非零退出码终止整个程序
-        self.click_topic()
+        self.click_topic() # 先浏览帖子
+        self.reply_to_random_topic() # 再尝试回复一次
         self.print_connect_info()
         self.send_gotify_notification()
 
@@ -139,6 +143,65 @@ class LinuxDoBrowser:
                 logger.info("帖子可能已经点过赞了")
         except Exception as e:
             logger.error(f"点赞失败: {str(e)}")
+
+    @retry_decorator()
+    def reply_to_random_topic(self):
+        logger.info("开始尝试随机回复一个帖子")
+        page = self.context.new_page()
+        try:
+            page.goto(HOME_URL)
+            time.sleep(3) # 等待页面加载
+            topic_elements = page.query_selector_all("#list-area .title")
+            if not topic_elements:
+                logger.warning("在首页未找到任何主题帖，无法执行回复操作")
+                page.close()
+                return
+
+            topic_links = [topic.get_attribute("href") for topic in topic_elements]
+            target_topic_url = random.choice(topic_links)
+            full_topic_url = HOME_URL + target_topic_url
+            logger.info(f"选择帖子进行回复: {full_topic_url}")
+
+            page.goto(full_topic_url)
+            time.sleep(random.uniform(3, 5)) # 等待帖子页面加载
+
+            # 寻找主要的回复按钮 (可能需要调整选择器)
+            reply_button_selector = 'button#reply-button, button.create.reply'
+            reply_button = page.locator(reply_button_selector).first
+            if not reply_button.is_visible():
+                 # 尝试滚动到页面底部查找回复按钮
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                time.sleep(2)
+                reply_button = page.locator(reply_button_selector).first
+
+            if reply_button.is_visible():
+                logger.info("找到回复按钮，准备点击")
+                reply_button.click()
+                time.sleep(random.uniform(2, 4)) # 等待编辑器加载
+
+                # 定位回复输入框 (可能需要调整选择器)
+                textarea_selector = 'textarea.d-editor-input'
+                textarea = page.locator(textarea_selector).first
+                replies = ["感谢分享！", "mark！", "我就看看！", "我静悄悄走来，静悄悄地走"]
+                reply_content = random.choice(replies)
+                logger.info(f"准备回复内容: {reply_content}")
+                textarea.fill(reply_content)
+                time.sleep(random.uniform(1, 3))
+
+                # 定位提交回复按钮 (可能需要调整选择器)
+                submit_button_selector = 'button.btn.btn-primary.create'
+                submit_button = page.locator(submit_button_selector).first
+                submit_button.click()
+                logger.success(f"回复成功: {reply_content}")
+                time.sleep(random.uniform(3, 5)) # 等待提交完成
+
+            else:
+                logger.warning("未找到回复按钮，可能帖子不允许回复或页面结构变化")
+
+        except Exception as e:
+            logger.error(f"回复帖子时发生错误: {str(e)}")
+        finally:
+            page.close()
 
     def print_connect_info(self):
         logger.info("获取连接信息")
