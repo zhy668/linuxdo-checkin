@@ -67,8 +67,7 @@ class LinuxDoBrowser:
         self.password = password
         self.pw = sync_playwright().start()
         self.browser = self.pw.firefox.launch(headless=True, timeout=30000)
-        # 定义一个 Windows Firefox 的 User-Agent 字符串
-        windows_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36" # 你可以根据需要更新版本号
+        windows_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0"
         self.context = self.browser.new_context(
             user_agent=windows_user_agent
         )
@@ -199,7 +198,7 @@ class LinuxDoBrowser:
                 # 定位回复输入框 (可能需要调整选择器)
                 textarea_selector = 'textarea.d-editor-input'
                 textarea = page.locator(textarea_selector).first
-                replies = ["感谢分享！", "mark！", "我就看看！", "我静悄悄走来，静悄悄地走"]
+                replies = ["感谢分享！", "mark！", "我就看看！", "我静悄悄走来，静悄悄地走", "围观围观！"]
                 reply_content = random.choice(replies)
                 logger.info(f"准备回复内容: {reply_content}")
                 textarea.fill(reply_content)
