@@ -24,12 +24,6 @@ jobs:
           pip install -r requirements.txt
           playwright install --with-deps firefox
 
-      - name: Wait random delay (0 to 1 hours)
-        run: |
-          delay=$(( RANDOM % 3600 )) # 1 hours * 60 min/hour * 60 sec/min = 3600 seconds
-          echo "Sleeping for $delay seconds to randomize start time..."
-          sleep $delay
-
       - name: Execute script
         env:
           LINUXDO_USERNAME: ${{ secrets.LINUXDO_USERNAME }}
