@@ -3,7 +3,7 @@ name: Daily Check-in
 on:
   schedule:
     #- cron: '0 1 * * *'  # 每天1点 UTC 时间执行
-    - cron: '0 */18 * * *'  # 每12小时执行一次
+    - cron: '0 10 * * *'  # 每天 UTC 时间 8 点触发，实际执行时间会因随机延迟而变化
 
   workflow_dispatch:
 
@@ -23,6 +23,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           playwright install --with-deps firefox
+
+      - name: Wait random delay (0 to 1 hours)
+        run: |
+          delay=$(( RANDOM % 3600 )) # 1 hours * 60 min/hour * 60 sec/min = 3600 seconds
+          echo "Sleeping for $delay seconds to randomize start time..."
+          sleep $delay
 
       - name: Execute script
         env:
