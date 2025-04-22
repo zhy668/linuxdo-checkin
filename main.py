@@ -67,7 +67,11 @@ class LinuxDoBrowser:
         self.password = password
         self.pw = sync_playwright().start()
         self.browser = self.pw.firefox.launch(headless=True, timeout=30000)
-        self.context = self.browser.new_context()
+        # 定义一个 Windows Firefox 的 User-Agent 字符串
+        windows_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36" # 你可以根据需要更新版本号
+        self.context = self.browser.new_context(
+            user_agent=windows_user_agent
+        )
         self.page = self.context.new_page()
         self.page.goto(HOME_URL)
 
