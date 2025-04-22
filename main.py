@@ -37,21 +37,34 @@ def retry_decorator(retries=3):
 os.environ.pop("DISPLAY", None)
 os.environ.pop("DYLD_LIBRARY_PATH", None)
 
-USERNAME = os.environ.get("LINUXDO_USERNAME")
-PASSWORD = os.environ.get("LINUXDO_PASSWORD")
-if not USERNAME:
-    USERNAME = os.environ.get('USERNAME')
-if not PASSWORD:
-    PASSWORD = os.environ.get('PASSWORD')
-GOTIFY_URL = os.environ.get("GOTIFY_URL")  # 新增环境变量
-GOTIFY_TOKEN = os.environ.get("GOTIFY_TOKEN")  # 新增环境变量
+# 读取并解析多账户凭据
+raw_usernames = os.environ.get("LINUXDO_USERNAME")
+raw_passwords = os.environ.get("LINUXDO_PASSWORD")
+
+if not raw_usernames or not raw_passwords:
+    logger.error("请设置 LINUXDO_USERNAME 和 LINUXDO_PASSWORD 环境变量。多账户请用 ; 分隔。")
+    sys.exit(1)
+
+usernames = [u.strip() for u in raw_usernames.split(';') if u.strip()]
+passwords = [p.strip() for p in raw_passwords.split(';') if p.strip()]
+
+if len(usernames) != len(passwords):
+    logger.error(f"用户名数量 ({len(usernames)}) 与密码数量 ({len(passwords)}) 不匹配。请检查环境变量。")
+    sys.exit(1)
+
+logger.info(f"检测到 {len(usernames)} 个账户。")
+
+GOTIFY_URL = os.environ.get("GOTIFY_URL")
+GOTIFY_TOKEN = os.environ.get("GOTIFY_TOKEN")
 
 HOME_URL = "https://linux.do/"
 LOGIN_URL = "https://linux.do/login"
 
 
 class LinuxDoBrowser:
-    def __init__(self) -> None:
+    def __init__(self, username, password) -> None:
+        self.username = username
+        self.password = password
         self.pw = sync_playwright().start()
         self.browser = self.pw.firefox.launch(headless=True, timeout=30000)
         self.context = self.browser.new_context()
@@ -59,22 +72,22 @@ class LinuxDoBrowser:
         self.page.goto(HOME_URL)
 
     def login(self):
-        logger.info("开始登录")
+        logger.info(f"账户 [{self.username}] 开始登录")
         # self.page.click(".login-button .d-button-label")
         self.page.goto(LOGIN_URL)
         time.sleep(2)
-        self.page.fill("#login-account-name", USERNAME)
+        self.page.fill("#login-account-name", self.username)
         time.sleep(2)
-        self.page.fill("#login-account-password", PASSWORD)
+        self.page.fill("#login-account-password", self.password)
         time.sleep(2)
         self.page.click("#login-button")
         time.sleep(10)
         user_ele = self.page.query_selector("#current-user")
         if not user_ele:
-            logger.error("登录失败")
+            logger.error(f"账户 [{self.username}] 登录失败")
             return False
         else:
-            logger.info("登录成功")
+            logger.info(f"账户 [{self.username}] 登录成功")
             return True
 
     def click_topic(self):
@@ -247,8 +260,29 @@ class LinuxDoBrowser:
 
 
 if __name__ == "__main__":
-    if not USERNAME or not PASSWORD:
-        print("Please set USERNAME and PASSWORD")
-        exit(1)
-    l = LinuxDoBrowser()
-    l.run()
+    total_accounts = len(usernames)
+    logger.info(f"共找到 {total_accounts} 个账户，开始执行任务...")
+
+    for i, (username, password) in enumerate(zip(usernames, passwords), 1):
+        logger.info(f"--- 开始处理第 {i}/{total_accounts} 个账户: {username} ---")
+        try:
+            l = LinuxDoBrowser(username, password)
+            l.run()
+            logger.info(f"--- 账户 {username} 处理完成 ---")
+        except Exception as e:
+            logger.error(f"处理账户 {username} 时发生严重错误: {e}")
+            logger.exception("详细错误信息:") # 打印堆栈跟踪
+        finally:
+            # 确保浏览器资源被释放，即使出错
+            try:
+                l.browser.close() # 关闭浏览器
+                l.pw.stop() # 停止playwright
+            except Exception as close_err:
+                logger.warning(f"关闭账户 {username} 的浏览器资源时出错: {close_err}")
+            # 在账户之间添加短暂延时，可选
+            if i < total_accounts:
+                delay = random.uniform(30, 60)
+                logger.info(f"等待 {delay:.2f} 秒后处理下一个账户...")
+                time.sleep(delay)
+
+    logger.info("所有账户处理完毕。")
