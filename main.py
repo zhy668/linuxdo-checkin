@@ -139,7 +139,10 @@ class LinuxDoBrowser:
             logger.error("登录失败，程序终止")
             sys.exit(1)  # 使用非零退出码终止整个程序
         self.click_topic() # 先浏览帖子
-        self.reply_to_random_topic() # 再尝试回复一次
+        # 随机回复两个帖子
+        for _ in range(2):
+            self.reply_to_random_topic()
+            time.sleep(random.uniform(5, 10)) # 回复之间增加随机延时
         self.print_connect_info()
         self.send_gotify_notification()
 
@@ -195,22 +198,21 @@ class LinuxDoBrowser:
                 # 定位回复输入框 (可能需要调整选择器)
                 textarea_selector = 'textarea.d-editor-input'
                 textarea = page.locator(textarea_selector).first
-                replies = ["感谢分享！", "mark！", "我就看看！", "我静悄悄走来，静悄悄地走", "围观围观！"]
+                replies = ["感谢分享!", "mark!", "我就看看！", "我静悄悄走来，静悄悄地走","围观围观!", "66666"]
                 reply_content = random.choice(replies)
                 logger.info(f"准备回复内容: {reply_content}")
                 textarea.fill(reply_content)
                 time.sleep(random.uniform(1, 3))
 
                 # 定位提交回复按钮 (可能需要调整选择器)
-                submit_button_selector = 'button.btn.btn-primary.create'
-                submit_button = page.locator(submit_button_selector).first
-                submit_button.click()
+                textarea.press("Control+Enter")
+                # 等待回复成功的提示出现或编辑框消失
                 try:
                     page.wait_for_selector(textarea_selector, state='hidden', timeout=5000)
                     logger.success(f"回复成功: {reply_content}")
                 except Exception:
-                    logger.warning("回复可能未成功提交，再次尝试点击提交按钮")
-                    submit_button.click()
+                    logger.warning("回复可能未成功提交，再次尝试按Ctrl+Enter")
+                    textarea.press("Control+Enter") 
                     time.sleep(5) # 多等待一会确保提交
                 
                 time.sleep(random.uniform(3, 5)) # 等待提交完成
