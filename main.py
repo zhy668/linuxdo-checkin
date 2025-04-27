@@ -198,7 +198,7 @@ class LinuxDoBrowser:
                 # 定位回复输入框 (可能需要调整选择器)
                 textarea_selector = 'textarea.d-editor-input'
                 textarea = page.locator(textarea_selector).first
-                replies = ["感谢分享!", "mark!", "我就看看！", "我静悄悄走来，静悄悄地走","围观围观!", "66666"]
+                replies = ["感谢分享!", "mark!", "我就看看!", "我静悄悄走来，静悄悄地走", "围观围观!", "66666", "求点赞!!!!"]
                 reply_content = random.choice(replies)
                 logger.info(f"准备回复内容: {reply_content}")
                 textarea.fill(reply_content)
