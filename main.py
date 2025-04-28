@@ -141,7 +141,7 @@ class LinuxDoBrowser:
         self.click_topic() # 先浏览帖子
         # 随机回复两个帖子
         for _ in range(1):
-            self.reply_to_random_topic()
+            #self.reply_to_random_topic()
             time.sleep(random.uniform(5, 10)) # 回复之间增加随机延时
         self.print_connect_info()
         self.send_gotify_notification()
