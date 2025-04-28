@@ -140,7 +140,7 @@ class LinuxDoBrowser:
             sys.exit(1)  # 使用非零退出码终止整个程序
         self.click_topic() # 先浏览帖子
         # 随机回复两个帖子
-        for _ in range(2):
+        for _ in range(1):
             self.reply_to_random_topic()
             time.sleep(random.uniform(5, 10)) # 回复之间增加随机延时
         self.print_connect_info()
@@ -198,7 +198,7 @@ class LinuxDoBrowser:
                 # 定位回复输入框 (可能需要调整选择器)
                 textarea_selector = 'textarea.d-editor-input'
                 textarea = page.locator(textarea_selector).first
-                replies = ["感谢分享!", "mark!", "我就看看!", "我静悄悄走来，静悄悄地走", "围观围观!", "66666", "求点赞!!!!"]
+                replies = ["mark!", "我就看看!", "我静悄悄走来，静悄悄地走", "围观围观!", "66666", "求点赞!!!!"]
                 reply_content = random.choice(replies)
                 logger.info(f"准备回复内容: {reply_content}")
                 textarea.fill(reply_content)
