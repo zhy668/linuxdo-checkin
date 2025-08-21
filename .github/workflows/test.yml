@@ -1,0 +1,83 @@
+name: Test Environment
+
+on:
+  workflow_dispatch:  # 允许手动触发测试
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libnss3-dev \
+          libatk-bridge2.0-dev \
+          libdrm-dev \
+          libxcomposite-dev \
+          libxdamage-dev \
+          libxrandr-dev \
+          libgbm-dev \
+          libxss-dev \
+          libasound2-dev \
+          libatspi2.0-dev \
+          libgtk-3-dev
+          
+    - name: Install Chrome
+      run: |
+        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+        sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list'
+        sudo apt-get update
+        sudo apt-get install -y google-chrome-stable
+        
+    - name: Verify Chrome installation
+      run: |
+        google-chrome --version
+        which google-chrome
+        
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Test DrissionPage import
+      run: |
+        python -c "
+        import sys
+        print('Python version:', sys.version)
+        try:
+            from DrissionPage import ChromiumPage, ChromiumOptions
+            print('✅ DrissionPage import successful')
+        except Exception as e:
+            print('❌ DrissionPage import failed:', e)
+            sys.exit(1)
+        "
+        
+    - name: Test basic browser creation
+      run: |
+        python -c "
+        from DrissionPage import ChromiumOptions
+        import os
+        
+        # 测试基本配置
+        co = ChromiumOptions()
+        co.headless(True)
+        co.set_argument('--no-sandbox')
+        co.set_argument('--disable-gpu')
+        co.set_argument('--disable-dev-shm-usage')
+        print('✅ ChromiumOptions configuration successful')
+        
+        # 测试环境变量
+        print('Environment check:')
+        print('GITHUB_ACTIONS:', os.getenv('GITHUB_ACTIONS'))
+        print('RUNNER_OS:', os.getenv('RUNNER_OS'))
+        "
