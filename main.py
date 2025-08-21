@@ -142,6 +142,217 @@ class LinuxDoBrowser:
 
         self._navigate_to_home()
 
+    def _handle_verification_automatically(self):
+        """自动处理人机验证"""
+        logger.info("开始自动处理人机验证...")
+        max_attempts = 90  # 最多等待90次，每次2秒，总共3分钟
+        consecutive_failures = 0  # 连续失败次数
+
+        for attempt in range(max_attempts):
+            try:
+                # 检查是否已经登录成功
+                if self._check_login_success():
+                    logger.success("登录成功，无需人机验证或验证已完成")
+                    return True
+
+                # 检查页面内容，判断验证类型
+                page_content = self.browser.html.lower()
+
+                # 方法1: 处理Cloudflare Turnstile验证
+                if 'turnstile' in page_content or 'cf-turnstile' in page_content:
+                    logger.info(f"第{attempt+1}次尝试：检测到Cloudflare Turnstile验证")
+                    if self._handle_turnstile_verification():
+                        consecutive_failures = 0  # 重置失败计数器
+                        continue
+
+                # 方法2: 处理传统的验证按钮
+                verify_selectors = [
+                    'input[value*="验证"]',
+                    'input[value*="Verify"]',
+                    'input[value*="确认"]',
+                    'input[value*="Continue"]',
+                    'button[type="submit"]',
+                    '.verify-button',
+                    '.challenge-button'
+                ]
+
+                for selector in verify_selectors:
+                    verify_btn = self.browser.ele(selector, timeout=1)
+                    if verify_btn and verify_btn.states.is_displayed:
+                        logger.info(f"第{attempt+1}次尝试：找到验证按钮 {selector}")
+                        verify_btn.click()
+                        consecutive_failures = 0  # 重置失败计数器
+                        time.sleep(3)
+                        break
+
+                # 方法3: 检查并处理iframe中的验证
+                iframes = self.browser.eles('iframe')
+                for iframe in iframes:
+                    try:
+                        iframe_src = iframe.attr('src') or ''
+                        if 'turnstile' in iframe_src or 'challenge' in iframe_src:
+                            logger.info(f"第{attempt+1}次尝试：检测到验证iframe")
+                            # 尝试点击iframe区域
+                            iframe.click()
+                            time.sleep(2)
+                            break
+                    except:
+                        continue
+
+                # 方法4: 检查并处理其他类型的验证
+                if self._handle_other_verifications():
+                    continue
+
+                # 方法5: 模拟人类行为，随机移动鼠标和滚动
+                if attempt % 10 == 0:  # 每10次尝试执行一次
+                    try:
+                        # 随机移动鼠标
+                        self.browser.actions.move_to(100 + attempt * 5, 100 + attempt * 3)
+                        time.sleep(0.5)
+                        # 随机滚动页面
+                        self.browser.scroll.to_bottom()
+                        time.sleep(0.5)
+                        self.browser.scroll.to_top()
+                        time.sleep(0.5)
+                    except:
+                        pass
+
+                # 动态调整等待时间
+                consecutive_failures += 1
+                if consecutive_failures > 10:
+                    wait_time = 5  # 连续失败多次时增加等待时间
+                else:
+                    wait_time = 2
+
+                logger.info(f"第{attempt+1}次验证尝试完成，等待{wait_time}秒后继续...")
+                time.sleep(wait_time)
+
+            except Exception as e:
+                logger.warning(f"第{attempt+1}次验证尝试出错: {str(e)}")
+                time.sleep(2)
+                continue
+
+        logger.error(f"经过{max_attempts}次尝试，仍无法完成人机验证")
+        return False
+
+    def _handle_turnstile_verification(self):
+        """处理Cloudflare Turnstile验证"""
+        try:
+            # 查找Turnstile验证框
+            turnstile_selectors = [
+                '.cf-turnstile',
+                'iframe[src*="turnstile"]',
+                '[data-sitekey]',
+                '.challenge-form'
+            ]
+
+            for selector in turnstile_selectors:
+                element = self.browser.ele(selector, timeout=2)
+                if element:
+                    logger.info(f"找到Turnstile元素: {selector}")
+                    # 尝试点击验证区域
+                    element.click()
+                    time.sleep(1)
+
+                    # 如果是iframe，尝试切换到iframe内部
+                    if 'iframe' in selector:
+                        try:
+                            frame = self.browser.get_frame(element)
+                            if frame:
+                                # 在iframe内查找可点击的元素
+                                clickable = frame.ele('input, button, .checkbox', timeout=2)
+                                if clickable:
+                                    clickable.click()
+                                    time.sleep(1)
+                        except:
+                            pass
+
+                    return True
+
+            return False
+        except Exception as e:
+            logger.debug(f"处理Turnstile验证时出错: {str(e)}")
+            return False
+
+    def _handle_other_verifications(self):
+        """处理其他类型的验证"""
+        try:
+            # 检查是否有reCAPTCHA
+            recaptcha_selectors = [
+                '.g-recaptcha',
+                'iframe[src*="recaptcha"]',
+                '[data-sitekey]'
+            ]
+
+            for selector in recaptcha_selectors:
+                element = self.browser.ele(selector, timeout=1)
+                if element:
+                    logger.info(f"检测到reCAPTCHA验证: {selector}")
+                    element.click()
+                    time.sleep(2)
+                    return True
+
+            # 检查是否有hCaptcha
+            hcaptcha_selectors = [
+                '.h-captcha',
+                'iframe[src*="hcaptcha"]'
+            ]
+
+            for selector in hcaptcha_selectors:
+                element = self.browser.ele(selector, timeout=1)
+                if element:
+                    logger.info(f"检测到hCaptcha验证: {selector}")
+                    element.click()
+                    time.sleep(2)
+                    return True
+
+            # 检查是否有其他验证按钮或链接
+            other_selectors = [
+                'a[href*="verify"]',
+                'button[class*="verify"]',
+                'input[class*="captcha"]',
+                '.verification-button',
+                '.challenge-button'
+            ]
+
+            for selector in other_selectors:
+                element = self.browser.ele(selector, timeout=1)
+                if element and element.states.is_displayed:
+                    logger.info(f"检测到其他验证元素: {selector}")
+                    element.click()
+                    time.sleep(2)
+                    return True
+
+            return False
+        except Exception as e:
+            logger.debug(f"处理其他验证时出错: {str(e)}")
+            return False
+
+    def _check_login_success(self):
+        """检查是否登录成功"""
+        try:
+            # 检查是否存在登录成功的标志
+            success_indicators = [
+                '.current-user',
+                '.user-menu',
+                '.header-dropdown-toggle',
+                '[data-user-card]',
+                '.user-activity-link'
+            ]
+
+            for indicator in success_indicators:
+                if self.browser.ele(indicator, timeout=1):
+                    return True
+
+            # 检查URL是否已跳转到主页
+            current_url = self.browser.url
+            if 'login' not in current_url.lower() and 'connect.linux.do' not in current_url:
+                return True
+
+            return False
+        except:
+            return False
+
     def _navigate_to_home(self):
         """导航到首页"""
         self.browser.get(HOME_URL, retry=3, interval=2, timeout=15)
@@ -185,17 +396,19 @@ class LinuxDoBrowser:
             if login_button:
                 logger.info("找到登录按钮，准备点击...")
                 login_button.click()
-                logger.info("已点击登录按钮，等待登录完成...")
-                # 简单等待，让用户手动处理人机验证
-                time.sleep(30)
+                logger.info("已点击登录按钮，开始自动处理人机验证...")
+
+                # 自动处理人机验证
+                if not self._handle_verification_automatically():
+                    logger.error("自动处理人机验证失败")
+                    return False
             else:
                 logger.error("未找到登录按钮")
                 return False
 
-            # 检查登录是否成功
-            user_ele = self.browser.ele("#current-user", timeout=15)
-            if user_ele:
-                logger.info(f"账户 [{self.username}] 登录成功")
+            # 最终检查登录是否成功
+            if self._check_login_success():
+                logger.success(f"账户 [{self.username}] 登录成功")
                 return True
             else:
                 # 保存调试信息
