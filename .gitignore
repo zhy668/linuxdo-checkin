@@ -134,3 +134,5 @@ debug_*.html
 browser_data/
 test_*.py
 *_test.py
+.cunzhi-memory/
+*.log
