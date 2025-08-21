@@ -55,8 +55,8 @@ if len(usernames) != len(passwords):
 
 logger.info(f"检测到 {len(usernames)} 个账户。")
 
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID") or os.environ.get("TELEGRAM_USERID")
 
 HOME_URL = "https://linux.do/"
 LOGIN_URL = "https://linux.do/login"

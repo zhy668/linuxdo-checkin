@@ -53,8 +53,8 @@ python main.py
 2. 在 GitHub 项目设置中添加 Secrets：
    - `LINUXDO_USERNAME`: 你的用户名
    - `LINUXDO_PASSWORD`: 你的密码
-   - `TELEGRAM_BOT_TOKEN`: Telegram Bot Token（可选）
-   - `TELEGRAM_CHAT_ID`: Telegram Chat ID（可选）
+   - `TELEGRAM_BOT_TOKEN` 或 `TELEGRAM_TOKEN`: Telegram Bot Token（可选）
+   - `TELEGRAM_CHAT_ID` 或 `TELEGRAM_USERID`: Telegram Chat ID（可选）
 
 3. 启用 GitHub Actions
 
@@ -68,8 +68,8 @@ python main.py
 |--------|------|------|
 | `LINUXDO_USERNAME` | Linux.Do 用户名，多账户用分号分隔 | 是 |
 | `LINUXDO_PASSWORD` | Linux.Do 密码，多账户用分号分隔 | 是 |
-| `TELEGRAM_BOT_TOKEN` | Telegram Bot Token | 否 |
-| `TELEGRAM_CHAT_ID` | Telegram Chat ID | 否 |
+| `TELEGRAM_BOT_TOKEN` 或 `TELEGRAM_TOKEN` | Telegram Bot Token | 否 |
+| `TELEGRAM_CHAT_ID` 或 `TELEGRAM_USERID` | Telegram Chat ID | 否 |
 
 ### 多账户配置
 
@@ -92,10 +92,15 @@ LINUXDO_PASSWORD=pass1;pass2;pass3
    - 访问 `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates`
    - 在返回的 JSON 中找到 `chat.id`
 
-3. 配置环境变量：
+3. 配置环境变量（支持两种命名方式）：
 ```env
+# 方式1（推荐）
 TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
 TELEGRAM_CHAT_ID=123456789
+
+# 方式2（兼容）
+TELEGRAM_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
+TELEGRAM_USERID=123456789
 ```
 
 ## 技术特点

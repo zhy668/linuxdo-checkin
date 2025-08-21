@@ -63,11 +63,16 @@ jobs:
       run: |
         echo "LINUXDO_USERNAME=${{ secrets.LINUXDO_USERNAME }}" >> .env
         echo "LINUXDO_PASSWORD=${{ secrets.LINUXDO_PASSWORD }}" >> .env
+        # 支持两种Telegram环境变量名称
         if [ -n "${{ secrets.TELEGRAM_BOT_TOKEN }}" ]; then
           echo "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" >> .env
+        elif [ -n "${{ secrets.TELEGRAM_TOKEN }}" ]; then
+          echo "TELEGRAM_TOKEN=${{ secrets.TELEGRAM_TOKEN }}" >> .env
         fi
         if [ -n "${{ secrets.TELEGRAM_CHAT_ID }}" ]; then
           echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" >> .env
+        elif [ -n "${{ secrets.TELEGRAM_USERID }}" ]; then
+          echo "TELEGRAM_USERID=${{ secrets.TELEGRAM_USERID }}" >> .env
         fi
         
     - name: Run checkin
