@@ -8,7 +8,7 @@
 - ✅ 自动浏览帖子完成签到
 - ✅ 支持多账户
 - ✅ 支持 GitHub Actions 定时运行
-- ✅ 支持 Gotify 通知推送
+- ✅ 支持 Telegram 通知推送
 - ✅ 自动处理 Cloudflare 验证
 - ✅ 无头模式运行
 
@@ -36,9 +36,9 @@ LINUXDO_PASSWORD=your_password
 # LINUXDO_USERNAME=user1;user2
 # LINUXDO_PASSWORD=pass1;pass2
 
-# 可选：Gotify 通知
-GOTIFY_URL=https://your-gotify-server.com
-GOTIFY_TOKEN=your_gotify_token
+# 可选：Telegram 通知
+TELEGRAM_BOT_TOKEN=your_bot_token
+TELEGRAM_CHAT_ID=your_chat_id
 ```
 
 4. 运行
@@ -53,8 +53,8 @@ python main.py
 2. 在 GitHub 项目设置中添加 Secrets：
    - `LINUXDO_USERNAME`: 你的用户名
    - `LINUXDO_PASSWORD`: 你的密码
-   - `GOTIFY_URL`: Gotify 服务器地址（可选）
-   - `GOTIFY_TOKEN`: Gotify 令牌（可选）
+   - `TELEGRAM_BOT_TOKEN`: Telegram Bot Token（可选）
+   - `TELEGRAM_CHAT_ID`: Telegram Chat ID（可选）
 
 3. 启用 GitHub Actions
 
@@ -68,8 +68,8 @@ python main.py
 |--------|------|------|
 | `LINUXDO_USERNAME` | Linux.Do 用户名，多账户用分号分隔 | 是 |
 | `LINUXDO_PASSWORD` | Linux.Do 密码，多账户用分号分隔 | 是 |
-| `GOTIFY_URL` | Gotify 服务器地址 | 否 |
-| `GOTIFY_TOKEN` | Gotify 应用令牌 | 否 |
+| `TELEGRAM_BOT_TOKEN` | Telegram Bot Token | 否 |
+| `TELEGRAM_CHAT_ID` | Telegram Chat ID | 否 |
 
 ### 多账户配置
 
@@ -77,6 +77,25 @@ python main.py
 ```env
 LINUXDO_USERNAME=user1;user2;user3
 LINUXDO_PASSWORD=pass1;pass2;pass3
+```
+
+### Telegram 通知配置
+
+1. 创建 Telegram Bot：
+   - 在 Telegram 中搜索 @BotFather
+   - 发送 `/newbot` 创建新机器人
+   - 获取 Bot Token
+
+2. 获取 Chat ID：
+   - 将机器人添加到群组或私聊
+   - 发送消息给机器人
+   - 访问 `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates`
+   - 在返回的 JSON 中找到 `chat.id`
+
+3. 配置环境变量：
+```env
+TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
+TELEGRAM_CHAT_ID=123456789
 ```
 
 ## 技术特点

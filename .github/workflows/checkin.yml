@@ -63,11 +63,11 @@ jobs:
       run: |
         echo "LINUXDO_USERNAME=${{ secrets.LINUXDO_USERNAME }}" >> .env
         echo "LINUXDO_PASSWORD=${{ secrets.LINUXDO_PASSWORD }}" >> .env
-        if [ -n "${{ secrets.GOTIFY_URL }}" ]; then
-          echo "GOTIFY_URL=${{ secrets.GOTIFY_URL }}" >> .env
+        if [ -n "${{ secrets.TELEGRAM_BOT_TOKEN }}" ]; then
+          echo "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" >> .env
         fi
-        if [ -n "${{ secrets.GOTIFY_TOKEN }}" ]; then
-          echo "GOTIFY_TOKEN=${{ secrets.GOTIFY_TOKEN }}" >> .env
+        if [ -n "${{ secrets.TELEGRAM_CHAT_ID }}" ]; then
+          echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" >> .env
         fi
         
     - name: Run checkin
