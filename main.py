@@ -122,7 +122,7 @@ def cleanup_drission_processes():
 
 
 class LinuxDoBrowser:
-    def __init__(self, username, password, headless=False) -> None:
+    def __init__(self, username, password, headless=True) -> None:
         self.username = username
         self.password = password
         self.headless = headless
@@ -368,6 +368,21 @@ class LinuxDoBrowser:
 
 
 if __name__ == "__main__":
+    # 检测运行环境
+    is_github_actions = os.getenv('GITHUB_ACTIONS') == 'true'
+    if is_github_actions:
+        logger.info("检测到GitHub Actions环境")
+        # 在GitHub Actions中测试Chrome是否可用
+        try:
+            import subprocess
+            result = subprocess.run(['google-chrome', '--version'], capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                logger.info(f"Chrome版本: {result.stdout.strip()}")
+            else:
+                logger.warning("Chrome可能未正确安装")
+        except Exception as e:
+            logger.warning(f"无法检测Chrome版本: {e}")
+
     total_accounts = len(usernames)
     logger.info(f"共找到 {total_accounts} 个账户，开始执行任务...")
 
