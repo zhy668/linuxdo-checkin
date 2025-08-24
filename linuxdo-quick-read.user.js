@@ -225,6 +225,73 @@
     // 未读帖子浏览器
     const unreadBrowser = {
 
+        // 从页面文档中提取话题
+        extractTopicsFromPage(doc, topics) {
+            const topicRows = doc.querySelectorAll('table tbody tr');
+            console.log(`从页面提取到 ${topicRows.length} 行数据`);
+
+            topicRows.forEach((row) => {
+                const titleLinks = row.querySelectorAll('a[href*="/t/topic/"]');
+                let mainTitleLink = null;
+
+                // 找到主要的话题标题链接
+                for (let link of titleLinks) {
+                    if (link.closest('h2') || (!mainTitleLink && link.textContent.trim().length > 5)) {
+                        mainTitleLink = link;
+                        break;
+                    }
+                }
+
+                if (mainTitleLink && !mainTitleLink.href.includes('#')) {
+                    const title = mainTitleLink.textContent.trim();
+                    if (title) {
+                        const url = mainTitleLink.href.startsWith('http') ?
+                                   mainTitleLink.href :
+                                   `https://linux.do${mainTitleLink.href}`;
+                        topics.push({
+                            title: title.length > 40 ? title.substring(0, 40) + '...' : title,
+                            url: url
+                        });
+                    }
+                }
+            });
+        },
+
+        // 通过iframe获取指定页面的话题
+        async getTopicsFromUrl(url) {
+            return new Promise((resolve, reject) => {
+                const iframe = document.createElement('iframe');
+                iframe.style.cssText = 'position: fixed; top: -1000px; left: -1000px; width: 1px; height: 1px; opacity: 0; pointer-events: none;';
+                iframe.src = url;
+                document.body.appendChild(iframe);
+
+                const timeout = setTimeout(() => {
+                    document.body.removeChild(iframe);
+                    reject(new Error(`加载页面超时: ${url}`));
+                }, 10000);
+
+                iframe.onload = () => {
+                    clearTimeout(timeout);
+                    try {
+                        const doc = iframe.contentDocument || iframe.contentWindow.document;
+                        const topics = [];
+                        this.extractTopicsFromPage(doc, topics);
+                        document.body.removeChild(iframe);
+                        resolve(topics);
+                    } catch (error) {
+                        document.body.removeChild(iframe);
+                        reject(error);
+                    }
+                };
+
+                iframe.onerror = () => {
+                    clearTimeout(timeout);
+                    document.body.removeChild(iframe);
+                    reject(new Error(`加载页面失败: ${url}`));
+                };
+            });
+        },
+
         async getUnreadTopics() {
             const topics = [];
 
@@ -232,95 +299,49 @@
                 if (location.pathname.includes('/unread')) {
                     // 直接从当前页面获取
                     console.log('从当前未读页面获取帖子');
-                    const topicRows = document.querySelectorAll('table tbody tr');
-
-                    topicRows.forEach((row) => {
-                        const titleLinks = row.querySelectorAll('a[href*="/t/topic/"]');
-                        let mainTitleLink = null;
-
-                        // 找到主要的话题标题链接
-                        for (let link of titleLinks) {
-                            if (link.closest('h2') || (!mainTitleLink && link.textContent.trim().length > 5)) {
-                                mainTitleLink = link;
-                                break;
-                            }
-                        }
-
-                        if (mainTitleLink && !mainTitleLink.href.includes('#')) {
-                            const title = mainTitleLink.textContent.trim();
-                            if (title) {
-                                topics.push({
-                                    title: title.length > 40 ? title.substring(0, 40) + '...' : title,
-                                    url: mainTitleLink.href
-                                });
-                            }
-                        }
-                    });
+                    this.extractTopicsFromPage(document, topics);
                 } else {
-                    // 使用隐藏iframe获取未读页面（参考旧版本方法）
+                    // 使用隐藏iframe获取未读页面，支持多页获取
                     ui.updateStatus('正在获取未读帖子...', '#007cbb');
                     console.log('通过隐藏iframe获取未读页面');
 
-                    // 在新的隐藏iframe中加载未读页面
-                    const iframe = document.createElement('iframe');
-                    iframe.style.cssText = 'position: fixed; top: -1000px; left: -1000px; width: 1px; height: 1px; opacity: 0; pointer-events: none;';
-                    iframe.src = '/unread';
-                    document.body.appendChild(iframe);
+                    // 尝试获取多页数据，最多获取3页
+                    const maxPages = 3;
+                    for (let page = 0; page < maxPages && topics.length < state.unreadCount; page++) {
+                        try {
+                            const url = page === 0 ? '/unread?per_page=100' : `/unread?page=${page}&per_page=100`;
+                            ui.updateStatus(`正在获取第 ${page + 1} 页未读帖子...`, '#007cbb');
 
-                    // 等待iframe加载完成
-                    await new Promise((resolve, reject) => {
-                        const timeout = setTimeout(() => {
-                            document.body.removeChild(iframe);
-                            reject(new Error('加载未读页面超时'));
-                        }, 10000);
+                            const pageTopics = await this.getTopicsFromUrl(url);
+                            console.log(`第 ${page + 1} 页获取到 ${pageTopics.length} 个帖子`);
 
-                        iframe.onload = () => {
-                            clearTimeout(timeout);
-                            try {
-                                const doc = iframe.contentDocument || iframe.contentWindow.document;
-                                const topicRows = doc.querySelectorAll('table tbody tr');
-                                console.log('iframe中找到的行数:', topicRows.length);
-
-                                topicRows.forEach((row) => {
-                                    const titleLinks = row.querySelectorAll('a[href*="/t/topic/"]');
-                                    let mainTitleLink = null;
-
-                                    // 找到主要的话题标题链接
-                                    for (let link of titleLinks) {
-                                        if (link.closest('h2') || (!mainTitleLink && link.textContent.trim().length > 5)) {
-                                            mainTitleLink = link;
-                                            break;
-                                        }
-                                    }
-
-                                    if (mainTitleLink && !mainTitleLink.href.includes('#')) {
-                                        const title = mainTitleLink.textContent.trim();
-                                        if (title) {
-                                            const url = mainTitleLink.href.startsWith('http') ?
-                                                       mainTitleLink.href :
-                                                       `https://linux.do${mainTitleLink.href}`;
-                                            topics.push({
-                                                title: title.length > 40 ? title.substring(0, 40) + '...' : title,
-                                                url: url
-                                            });
-                                        }
-                                    }
-                                });
-
-                                document.body.removeChild(iframe);
-                                resolve();
-                            } catch (error) {
-                                document.body.removeChild(iframe);
-                                reject(error);
+                            if (pageTopics.length === 0) {
+                                console.log(`第 ${page + 1} 页没有更多帖子，停止获取`);
+                                break;
                             }
-                        };
 
-                        iframe.onerror = () => {
-                            clearTimeout(timeout);
-                            document.body.removeChild(iframe);
-                            reject(new Error('加载未读页面失败'));
-                        };
-                    });
+                            topics.push(...pageTopics);
+
+                            // 如果已经获取足够的帖子，停止获取
+                            if (topics.length >= state.unreadCount) {
+                                console.log(`已获取足够的帖子 (${topics.length})，停止获取更多页面`);
+                                break;
+                            }
+
+                            // 页面间添加小延迟
+                            if (page < maxPages - 1) {
+                                await utils.delay(500);
+                            }
+                        } catch (error) {
+                            console.error(`获取第 ${page + 1} 页失败:`, error);
+                            if (page === 0) {
+                                // 如果第一页就失败了，抛出错误
+                                throw error;
+                            }
+                            // 其他页面失败则继续
+                            break;
+                        }
+                    }
                 }
 
                 console.log('总共找到未读帖子:', topics.length);
@@ -504,7 +525,7 @@
                 <div style="margin-bottom:6px;border-top:1px solid #eee;padding-top:6px;">
                     <div style="font-size:10px;color:#666;margin-bottom:3px;">📖 增加浏览的话题:</div>
                     <div style="display:flex;align-items:center;gap:4px;margin-bottom:4px;">
-                        <input type="number" id="unread-count" value="${state.unreadCount}" min="1" max="50" style="width:40px;padding:2px;border:1px solid #ddd;border-radius:2px;font-size:10px;">
+                        <input type="number" id="unread-count" value="${state.unreadCount}" min="1" max="100" style="width:40px;padding:2px;border:1px solid #ddd;border-radius:2px;font-size:10px;">
                         <span style="font-size:10px;color:#666;">个未读话题</span>
                     </div>
                     <div style="display:flex;gap:4px;">
@@ -601,7 +622,7 @@
 
             if (unreadCountInput) {
                 unreadCountInput.onchange = (e) => {
-                    state.unreadCount = Math.max(1, Math.min(50, parseInt(e.target.value) || 20));
+                    state.unreadCount = Math.max(1, Math.min(100, parseInt(e.target.value) || 20));
                     utils.storage.set('unreadCount', state.unreadCount);
                 };
             }
