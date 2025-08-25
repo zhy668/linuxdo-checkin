@@ -40,9 +40,9 @@
     // 配置
     const config = {
         speeds: {
-            NORMAL: { delay: 200, name: '正常' },
-            FAST: { delay: 100, name: '快速' },
-            TURBO: { delay: 50, name: '极速' }
+            NORMAL: { delay: 100, name: '正常' },
+            FAST: { delay: 50, name: '快速' },
+            TURBO: { delay: 20, name: '极速' }
         },
         storage: {
             speed: 'linuxdo-speed',
