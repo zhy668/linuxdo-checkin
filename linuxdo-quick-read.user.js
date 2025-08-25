@@ -2,7 +2,7 @@
 // @name         LinuxDo 辅助工具
 // @namespace    http://tampermonkey.net/
 // @version      7.0
-// @description  LinuxDo 论坛辅助工具：快速标记未读回复为已读，支持未读帖子随机浏览
+// @description  LinuxDo 论坛辅助工具：快速标记未读回复为已读，支持随机冷门帖子浏览
 // @author       Assistant
 // @match        https://linux.do/*
 // @grant        none
@@ -12,17 +12,29 @@
 (function() {
     'use strict';
 
+    // 🚫 关键修复：防止在iframe中执行脚本
+    if (window !== window.top) {
+        console.log('🚫 检测到在iframe中，跳过LinuxDo辅助工具脚本执行');
+        return;
+    }
+
+    console.log('✅ 在主窗口中，开始执行LinuxDo辅助工具脚本');
+
     // 应用状态管理
     const state = {
-        panel: null,
         isProcessing: false,
         isBrowsing: false,
         speed: 'NORMAL',
         isAutoMode: true,
         isCollapsed: false,
         unreadCount: 20,
+        concurrentThreads: 3,  // 并发线程数
         lastUrl: location.href,
-        lastTopicId: null  // 添加最后访问的话题ID
+        lastTopicId: null,  // 添加最后访问的话题ID
+        // 性能优化相关
+        urlCheckInterval: null,
+        eventListeners: [],
+        cachedElements: new Map()
     };
 
     // 配置
@@ -36,8 +48,25 @@
             speed: 'linuxdo-speed',
             autoMode: 'linuxdo-auto-mode',
             collapsed: 'linuxdo-collapsed',
-            unreadCount: 'linuxdo-unread-count'
+            unreadCount: 'linuxdo-unread-count',
+            concurrentThreads: 'linuxdo-concurrent-threads'
         }
+    };
+
+    // 常量定义
+    const CONSTANTS = {
+        DELAYS: {
+            INIT: 100,
+            REINIT: 300,
+            AUTO_CHECK: 500,
+            STATUS_UPDATE: 200
+        },
+        TIMEOUTS: {
+            IFRAME_LOAD: 10000,
+            IFRAME_BROWSE: 8000,
+            IFRAME_STAY: 3000
+        },
+        IFRAME_STYLE: 'position:fixed;top:-1000px;left:-1000px;width:1px;height:1px;opacity:0;pointer-events:none;'
     };
 
     // 工具函数
@@ -55,12 +84,15 @@
         // 延迟函数
         delay: (ms) => new Promise(resolve => setTimeout(resolve, ms)),
 
-        // 获取页面类型
+        // 获取页面类型 - 简化逻辑，在linux.do域名下显示全部功能
         getPageType: () => {
             const path = location.pathname;
+
+            // 话题页面
             if (path.includes('/t/topic/')) return 'topic';
-            if (path.includes('/latest') || path.includes('/unread') || path === '/') return 'list';
-            return 'other';
+
+            // 其他页面都视为列表页面，显示全部功能
+            return 'list';
         },
 
         // 提取话题ID
@@ -68,6 +100,56 @@
             const path = location.pathname;
             const match = path.match(/\/t\/topic\/(\d+)/);
             return match ? match[1] : null;
+        },
+
+        // 统一的iframe创建函数
+        createIframe: (url, timeout = CONSTANTS.TIMEOUTS.IFRAME_LOAD) => {
+            return new Promise((resolve, reject) => {
+                const iframe = document.createElement('iframe');
+                iframe.style.cssText = CONSTANTS.IFRAME_STYLE;
+                iframe.src = url;
+                document.body.appendChild(iframe);
+
+                const timeoutId = setTimeout(() => {
+                    utils.cleanupIframe(iframe);
+                    reject(new Error(`iframe加载超时: ${url}`));
+                }, timeout);
+
+                iframe.onload = () => {
+                    clearTimeout(timeoutId);
+                    resolve(iframe);
+                };
+
+                iframe.onerror = () => {
+                    clearTimeout(timeoutId);
+                    utils.cleanupIframe(iframe);
+                    reject(new Error(`iframe加载失败: ${url}`));
+                };
+            });
+        },
+
+        // 统一的iframe清理函数
+        cleanupIframe: (iframe) => {
+            try {
+                if (iframe && iframe.parentNode) {
+                    iframe.parentNode.removeChild(iframe);
+                }
+            } catch (e) {
+                console.warn('iframe清理失败:', e);
+            }
+        },
+
+        // 防抖函数
+        debounce: (func, wait) => {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
         },
 
         // 存储操作
@@ -87,6 +169,7 @@
             state.isAutoMode = utils.storage.get('autoMode', true);
             state.isCollapsed = utils.storage.get('collapsed', false);
             state.unreadCount = utils.storage.get('unreadCount', 20);
+            state.concurrentThreads = utils.storage.get('concurrentThreads', 3);
         },
 
         setSpeed(speed) {
@@ -102,7 +185,7 @@
             ui.updateModeButtons();
 
             if (auto && utils.getPageType() === 'topic' && !state.isProcessing) {
-                setTimeout(() => topicProcessor.checkAndProcess(), 500);
+                setTimeout(() => topicProcessor.checkAndProcess(), CONSTANTS.DELAYS.AUTO_CHECK);
             }
         },
 
@@ -172,7 +255,7 @@
             if (state.isProcessing) return;
             state.isProcessing = true;
             ui.updateStatus('处理中...', '#007cbb');
-            ui.updateStopButton(true); // 启用停止按钮
+            ui.updateStopButton(true);
 
             const replies = this.getRepliesNeedMarking();
             const topicInfo = this.getTopicInfo();
@@ -181,7 +264,7 @@
             if (!topicInfo || !csrfToken || replies.length === 0) {
                 ui.updateStatus(replies.length === 0 ? '✅ 无需标记' : '❌ 获取信息失败', replies.length === 0 ? 'green' : 'red');
                 state.isProcessing = false;
-                ui.updateStopButton(false); // 禁用停止按钮
+                ui.updateStopButton(false);
                 return;
             }
 
@@ -203,7 +286,7 @@
             ui.updateStatus(state.isProcessing ? `✅ 完成 ${successCount}个` : '⏹️ 已停止',
                            state.isProcessing ? 'green' : 'orange');
             state.isProcessing = false;
-            ui.updateStopButton(false); // 禁用停止按钮
+            ui.updateStopButton(false);
         },
 
         checkAndProcess() {
@@ -222,10 +305,10 @@
         }
     };
 
-    // 未读帖子浏览器
-    const unreadBrowser = {
+    // 冷门帖子浏览器
+    const coldTopicBrowser = {
 
-        // 从页面文档中提取话题
+        // 从页面文档中提取话题（包含浏览量和回复数信息）
         extractTopicsFromPage(doc, topics) {
             const topicRows = doc.querySelectorAll('table tbody tr');
             console.log(`从页面提取到 ${topicRows.length} 行数据`);
@@ -248,9 +331,32 @@
                         const url = mainTitleLink.href.startsWith('http') ?
                                    mainTitleLink.href :
                                    `https://linux.do${mainTitleLink.href}`;
+
+                        // 提取浏览量信息
+                        let views = 0;
+                        const viewsElement = row.querySelector('.views .number');
+                        if (viewsElement) {
+                            const viewsText = viewsElement.textContent.trim();
+                            // 处理 k 单位（如 1.2k = 1200）
+                            if (viewsText.includes('k')) {
+                                views = Math.floor(parseFloat(viewsText) * 1000);
+                            } else {
+                                views = parseInt(viewsText) || 0;
+                            }
+                        }
+
+                        // 提取回复数信息
+                        let replies = 0;
+                        const repliesElement = row.querySelector('.posts .number');
+                        if (repliesElement) {
+                            replies = parseInt(repliesElement.textContent.trim()) || 0;
+                        }
+
                         topics.push({
                             title: title.length > 40 ? title.substring(0, 40) + '...' : title,
-                            url: url
+                            url: url,
+                            views: views,
+                            replies: replies
                         });
                     }
                 }
@@ -259,58 +365,48 @@
 
         // 通过iframe获取指定页面的话题
         async getTopicsFromUrl(url) {
-            return new Promise((resolve, reject) => {
-                const iframe = document.createElement('iframe');
-                iframe.style.cssText = 'position: fixed; top: -1000px; left: -1000px; width: 1px; height: 1px; opacity: 0; pointer-events: none;';
-                iframe.src = url;
-                document.body.appendChild(iframe);
-
-                const timeout = setTimeout(() => {
-                    document.body.removeChild(iframe);
-                    reject(new Error(`加载页面超时: ${url}`));
-                }, 10000);
-
-                iframe.onload = () => {
-                    clearTimeout(timeout);
-                    try {
-                        const doc = iframe.contentDocument || iframe.contentWindow.document;
-                        const topics = [];
-                        this.extractTopicsFromPage(doc, topics);
-                        document.body.removeChild(iframe);
-                        resolve(topics);
-                    } catch (error) {
-                        document.body.removeChild(iframe);
-                        reject(error);
-                    }
-                };
-
-                iframe.onerror = () => {
-                    clearTimeout(timeout);
-                    document.body.removeChild(iframe);
-                    reject(new Error(`加载页面失败: ${url}`));
-                };
-            });
+            try {
+                const iframe = await utils.createIframe(url);
+                const doc = iframe.contentDocument || iframe.contentWindow.document;
+                const topics = [];
+                this.extractTopicsFromPage(doc, topics);
+                utils.cleanupIframe(iframe);
+                return topics;
+            } catch (error) {
+                console.error(`获取页面话题失败: ${url}`, error);
+                throw error;
+            }
         },
 
-        async getUnreadTopics() {
-            const topics = [];
+        // 判断是否为冷门帖子
+        isColdTopic(topic) {
+            const views = topic.views || 0;
+            const replies = topic.replies || 0;
+
+            // 冷门帖子标准：浏览量5-800，回复数0-30
+            return views >= 5 && views <= 800 && replies >= 0 && replies <= 30;
+        },
+
+        async getColdTopics() {
+            const allTopics = [];
+            const coldTopics = [];
 
             try {
-                if (location.pathname.includes('/unread')) {
+                if (location.pathname.includes('/latest')) {
                     // 直接从当前页面获取
-                    console.log('从当前未读页面获取帖子');
-                    this.extractTopicsFromPage(document, topics);
+                    console.log('从当前最新页面获取帖子');
+                    this.extractTopicsFromPage(document, allTopics);
                 } else {
-                    // 使用隐藏iframe获取未读页面，支持多页获取
-                    ui.updateStatus('正在获取未读帖子...', '#007cbb');
-                    console.log('通过隐藏iframe获取未读页面');
+                    // 使用隐藏iframe获取最新页面，支持多页获取
+                    ui.updateStatus('正在获取最新帖子...', '#007cbb');
+                    console.log('通过隐藏iframe获取最新页面');
 
-                    // 尝试获取多页数据，最多获取3页
-                    const maxPages = 3;
-                    for (let page = 0; page < maxPages && topics.length < state.unreadCount; page++) {
+                    // 尝试获取多页数据，最多获取5页以获得更多样本
+                    const maxPages = 5;
+                    for (let page = 0; page < maxPages && allTopics.length < 200; page++) {
                         try {
-                            const url = page === 0 ? '/unread?per_page=100' : `/unread?page=${page}&per_page=100`;
-                            ui.updateStatus(`正在获取第 ${page + 1} 页未读帖子...`, '#007cbb');
+                            const url = page === 0 ? '/latest?per_page=50' : `/latest?page=${page}&per_page=50`;
+                            ui.updateStatus(`正在获取第 ${page + 1} 页最新帖子...`, '#007cbb');
 
                             const pageTopics = await this.getTopicsFromUrl(url);
                             console.log(`第 ${page + 1} 页获取到 ${pageTopics.length} 个帖子`);
@@ -320,17 +416,11 @@
                                 break;
                             }
 
-                            topics.push(...pageTopics);
-
-                            // 如果已经获取足够的帖子，停止获取
-                            if (topics.length >= state.unreadCount) {
-                                console.log(`已获取足够的帖子 (${topics.length})，停止获取更多页面`);
-                                break;
-                            }
+                            allTopics.push(...pageTopics);
 
                             // 页面间添加小延迟
                             if (page < maxPages - 1) {
-                                await utils.delay(500);
+                                await utils.delay(CONSTANTS.DELAYS.AUTO_CHECK);
                             }
                         } catch (error) {
                             console.error(`获取第 ${page + 1} 页失败:`, error);
@@ -344,77 +434,106 @@
                     }
                 }
 
-                console.log('总共找到未读帖子:', topics.length);
+                console.log('总共获取到帖子:', allTopics.length);
 
-                // 如果没有找到任何帖子，提供用户提示
-                if (topics.length === 0) {
-                    ui.updateStatus('❌ 未找到未读帖子', 'red');
-                    console.log('建议：请先手动访问 /unread 页面确认是否有未读帖子');
+                // 筛选冷门帖子
+                for (const topic of allTopics) {
+                    if (this.isColdTopic(topic)) {
+                        coldTopics.push(topic);
+                    }
+                }
+
+                console.log('筛选出冷门帖子:', coldTopics.length);
+
+                // 如果没有找到任何冷门帖子，提供用户提示
+                if (coldTopics.length === 0) {
+                    ui.updateStatus('❌ 未找到冷门帖子', 'red');
+                    console.log('建议：尝试调整冷门帖子的筛选标准');
                 }
             } catch (error) {
-                console.error('获取未读帖子失败:', error);
+                console.error('获取冷门帖子失败:', error);
                 ui.updateStatus(`❌ 获取失败: ${error.message}`, 'red');
             }
 
-            return utils.shuffle(topics);
+            return utils.shuffle(coldTopics);
         },
 
         async browseTopicInIframe(topic) {
-            return new Promise(resolve => {
-                const iframe = document.createElement('iframe');
-                iframe.style.cssText = 'position:fixed;top:-1000px;left:-1000px;width:1px;height:1px;opacity:0;';
-                iframe.src = topic.url;
+            try {
+                const iframe = await utils.createIframe(topic.url, CONSTANTS.TIMEOUTS.IFRAME_BROWSE);
+                // 模拟浏览停留时间
+                await utils.delay(CONSTANTS.TIMEOUTS.IFRAME_STAY);
+                utils.cleanupIframe(iframe);
+            } catch (error) {
+                console.warn(`浏览话题失败: ${topic.url}`, error);
+                // 即使失败也继续，不中断整个浏览流程
+            }
+        },
 
-                const cleanup = () => {
-                    try { document.body.removeChild(iframe); } catch (e) {}
-                    resolve();
-                };
+        // 多线程浏览话题
+        async browseTopicsConcurrently(topics, startIndex, endIndex) {
+            const promises = [];
+            const actualEnd = Math.min(endIndex, topics.length);
 
-                iframe.onload = () => setTimeout(cleanup, 3000);
-                iframe.onerror = cleanup;
-                setTimeout(cleanup, 8000);
+            for (let i = startIndex; i < actualEnd && state.isBrowsing; i++) {
+                const topic = topics[i];
+                promises.push(this.browseTopicInIframe(topic));
 
-                document.body.appendChild(iframe);
-            });
+                // 控制并发数量，避免创建过多iframe
+                if (promises.length >= state.concurrentThreads || i === actualEnd - 1) {
+                    await Promise.allSettled(promises);
+                    promises.length = 0; // 清空数组
+
+                    // 批次间添加小延迟
+                    if (i < actualEnd - 1 && state.isBrowsing) {
+                        await utils.delay(500);
+                    }
+                }
+            }
         },
 
         async start() {
             if (state.isBrowsing) return;
             state.isBrowsing = true;
-            ui.updateBrowseButtons(true); // 更新按钮状态
+            ui.updateBrowseButtons(true);
 
-            const topics = await this.getUnreadTopics();
+            const topics = await this.getColdTopics();
             if (topics.length === 0) {
-                ui.updateStatus('❌ 未找到未读帖子', 'red');
+                ui.updateStatus('❌ 未找到冷门帖子', 'red');
                 state.isBrowsing = false;
-                ui.updateBrowseButtons(false); // 恢复按钮状态
+                ui.updateBrowseButtons(false);
                 return;
             }
 
             const targetCount = Math.min(state.unreadCount, topics.length);
-            ui.updateStatus(`开始浏览 ${targetCount} 个帖子...`, '#007cbb');
+            ui.updateStatus(`开始浏览 ${targetCount} 个冷门帖子 (${state.concurrentThreads}线程)...`, '#007cbb');
 
-            for (let i = 0; i < targetCount && state.isBrowsing; i++) {
-                const topic = topics[i];
-                ui.updateStatus(`浏览中 (${i + 1}/${targetCount}): ${topic.title}`, '#007cbb');
+            // 使用多线程并发浏览
+            const batchSize = state.concurrentThreads;
+            for (let i = 0; i < targetCount && state.isBrowsing; i += batchSize) {
+                const endIndex = Math.min(i + batchSize, targetCount);
+                const currentBatch = topics.slice(i, endIndex);
 
-                await this.browseTopicInIframe(topic);
+                ui.updateStatus(`浏览中 (${i + 1}-${endIndex}/${targetCount}): ${currentBatch.map(t => t.title.substring(0, 15)).join(', ')}...`, '#007cbb');
 
-                if (i < targetCount - 1 && state.isBrowsing) {
+                await this.browseTopicsConcurrently(topics, i, endIndex);
+
+                // 批次间添加延迟
+                if (endIndex < targetCount && state.isBrowsing) {
                     await utils.delay(1000);
                 }
             }
 
-            ui.updateStatus(state.isBrowsing ? `✅ 完成！浏览了 ${targetCount} 个帖子` : '⏹️ 已停止',
+            ui.updateStatus(state.isBrowsing ? `✅ 完成！浏览了 ${targetCount} 个冷门帖子` : '⏹️ 已停止',
                            state.isBrowsing ? 'green' : 'orange');
             state.isBrowsing = false;
-            ui.updateBrowseButtons(false); // 恢复按钮状态
+            ui.updateBrowseButtons(false);
         },
 
         stop() {
             state.isBrowsing = false;
-            ui.updateStatus('⏹️ 未读帖子浏览已停止', 'orange');
-            ui.updateBrowseButtons(false); // 恢复按钮状态
+            ui.updateStatus('⏹️ 冷门帖子浏览已停止', 'orange');
+            ui.updateBrowseButtons(false);
         }
     };
 
@@ -422,8 +541,24 @@
     const ui = {
         panel: null,
 
+        // 缓存DOM元素查询
+        getCachedElement(selector) {
+            if (!state.cachedElements.has(selector)) {
+                const element = this.panel?.querySelector(selector);
+                if (element) {
+                    state.cachedElements.set(selector, element);
+                }
+            }
+            return state.cachedElements.get(selector);
+        },
+
+        // 清理元素缓存
+        clearElementCache() {
+            state.cachedElements.clear();
+        },
+
         updateStatus(message, color = '#333') {
-            const statusEl = this.panel?.querySelector('#status');
+            const statusEl = this.getCachedElement('#status');
             if (statusEl) {
                 const shortMessage = message.length > 30 ? message.substring(0, 27) + '...' : message;
                 statusEl.textContent = shortMessage;
@@ -432,37 +567,40 @@
             }
         },
 
-        updateStopButton(enabled) {
-            const stopBtn = this.panel?.querySelector('#stop-btn');
-            if (stopBtn) {
-                stopBtn.disabled = !enabled;
-                stopBtn.style.opacity = enabled ? '1' : '0.5';
-                stopBtn.style.cursor = enabled ? 'pointer' : 'not-allowed';
+        // 防抖的状态更新 - 延迟初始化
+        get debouncedUpdateStatus() {
+            if (!this._debouncedUpdateStatus) {
+                this._debouncedUpdateStatus = utils.debounce((message, color) => {
+                    this.updateStatus(message, color);
+                }, 100);
+            }
+            return this._debouncedUpdateStatus;
+        },
+
+        // 统一的按钮状态更新函数
+        updateButtonState(selector, enabled) {
+            const button = this.getCachedElement(selector);
+            if (button) {
+                button.disabled = !enabled;
+                button.style.opacity = enabled ? '1' : '0.5';
+                button.style.cursor = enabled ? 'pointer' : 'not-allowed';
             }
         },
 
+        updateStopButton(enabled) {
+            this.updateButtonState('#stop-btn', enabled);
+        },
+
         updateBrowseButtons(isBrowsing) {
-            const startBtn = this.panel?.querySelector('#start-browse-btn');
-            const stopBtn = this.panel?.querySelector('#stop-browse-btn');
-
-            if (startBtn) {
-                startBtn.disabled = isBrowsing;
-                startBtn.style.opacity = isBrowsing ? '0.5' : '1';
-                startBtn.style.cursor = isBrowsing ? 'not-allowed' : 'pointer';
-            }
-
-            if (stopBtn) {
-                stopBtn.disabled = !isBrowsing;
-                stopBtn.style.opacity = isBrowsing ? '1' : '0.5';
-                stopBtn.style.cursor = isBrowsing ? 'pointer' : 'not-allowed';
-            }
+            this.updateButtonState('#start-browse-btn', !isBrowsing);
+            this.updateButtonState('#stop-browse-btn', isBrowsing);
         },
 
         updateModeButtons() {
             if (!this.panel) return;
-            const autoBtn = this.panel.querySelector('#auto-mode-btn');
-            const manualBtn = this.panel.querySelector('#manual-mode-btn');
-            const manualStartBtn = this.panel.querySelector('#manual-start-btn');
+            const autoBtn = this.getCachedElement('#auto-mode-btn');
+            const manualBtn = this.getCachedElement('#manual-mode-btn');
+            const manualStartBtn = this.getCachedElement('#manual-start-btn');
 
             if (autoBtn && manualBtn) {
                 autoBtn.style.background = state.isAutoMode ? '#28a745' : '#6c757d';
@@ -477,8 +615,8 @@
         },
 
         updateCollapsed() {
-            const panelBody = this.panel?.querySelector('#panel-body');
-            const toggleBtn = this.panel?.querySelector('#toggle-panel');
+            const panelBody = this.getCachedElement('#panel-body');
+            const toggleBtn = this.getCachedElement('#toggle-panel');
 
             if (panelBody && toggleBtn) {
                 panelBody.style.display = state.isCollapsed ? 'none' : 'block';
@@ -488,12 +626,10 @@
         },
 
         createPanel() {
-            if (this.panel) return;
-
-            const pageType = utils.getPageType();
-            const isListPage = pageType === 'list';
 
             this.panel = document.createElement('div');
+            // 添加唯一标识符
+            this.panel.setAttribute('data-linuxdo-helper-panel', 'true');
             this.panel.innerHTML = `
                 <div style="position:fixed;top:10px;right:10px;z-index:10000;background:rgba(255,255,255,0.95);border:1px solid #28a745;border-radius:6px;padding:8px;box-shadow:0 2px 8px rgba(0,0,0,0.1);font-family:Arial,sans-serif;width:200px;backdrop-filter:blur(5px);">
                     <div id="panel-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;cursor:pointer;">
@@ -506,7 +642,7 @@
                         </div>
                     </div>
                     <div id="panel-body" style="display:${state.isCollapsed ? 'none' : 'block'};">
-                        ${isListPage ? this.createUnreadBrowseControls() : ''}
+                        ${this.createColdTopicBrowseControls()}
                         ${this.createTopicControls()}
                     </div>
                 </div>
@@ -518,16 +654,21 @@
             // 初始化按钮状态
             this.updateStopButton(false);
             this.updateBrowseButtons(false);
+
+            console.log('面板创建完成');
         },
 
-        createUnreadBrowseControls() {
+        createColdTopicBrowseControls() {
             return `
                 <div style="margin-bottom:6px;border-top:1px solid #eee;padding-top:6px;">
-                    <div style="font-size:10px;color:#666;margin-bottom:3px;">📖 增加浏览的话题:</div>
+                    <div style="font-size:10px;color:#666;margin-bottom:3px;">� 随机冷门帖子浏览:</div>
                     <div style="display:flex;align-items:center;gap:4px;margin-bottom:4px;">
                         <input type="number" id="unread-count" value="${state.unreadCount}" min="1" max="100" style="width:40px;padding:2px;border:1px solid #ddd;border-radius:2px;font-size:10px;">
-                        <span style="font-size:10px;color:#666;">个未读话题</span>
+                        <span style="font-size:10px;color:#666;">个话题</span>
+                        <input type="number" id="concurrent-threads" value="${state.concurrentThreads}" min="1" max="10" style="width:30px;padding:2px;border:1px solid #ddd;border-radius:2px;font-size:10px;">
+                        <span style="font-size:10px;color:#666;">线程</span>
                     </div>
+                    <div style="font-size:9px;color:#999;margin-bottom:4px;">筛选标准: 浏览量5-800, 回复数0-30</div>
                     <div style="display:flex;gap:4px;">
                         <button id="start-browse-btn" style="padding:3px 8px;background:#17a2b8;color:white;border:none;border-radius:3px;font-size:10px;cursor:pointer;flex:1;">开始浏览</button>
                         <button id="stop-browse-btn" style="padding:3px 8px;background:#dc3545;color:white;border:none;border-radius:3px;font-size:10px;cursor:pointer;flex:1;" disabled>停止浏览</button>
@@ -578,47 +719,64 @@
         bindEvents() {
             if (!this.panel) return;
 
-            // 基本控制
-            this.panel.querySelector('#close-panel').onclick = () => this.removePanel();
-            this.panel.querySelector('#toggle-panel').onclick = (e) => {
-                e.stopPropagation();
-                stateManager.toggleCollapsed();
-            };
-            this.panel.querySelector('#panel-header').onclick = (e) => {
-                if (!['close-panel', 'toggle-panel'].includes(e.target.id)) {
+            // 基本控制 - 先清理缓存，然后重新缓存元素
+            this.clearElementCache();
+
+            const closeBtn = this.getCachedElement('#close-panel');
+            const toggleBtn = this.getCachedElement('#toggle-panel');
+            const panelHeader = this.getCachedElement('#panel-header');
+
+            if (closeBtn) closeBtn.onclick = () => this.removePanel();
+            if (toggleBtn) {
+                toggleBtn.onclick = (e) => {
+                    e.stopPropagation();
                     stateManager.toggleCollapsed();
-                }
-            };
-
-            // 模式切换
-            this.panel.querySelector('#auto-mode-btn').onclick = () => stateManager.setAutoMode(true);
-            this.panel.querySelector('#manual-mode-btn').onclick = () => stateManager.setAutoMode(false);
-
-            const manualStartBtn = this.panel.querySelector('#manual-start-btn');
-            if (manualStartBtn) {
-                manualStartBtn.onclick = () => topicProcessor.processUnread();
+                };
+            }
+            if (panelHeader) {
+                panelHeader.onclick = (e) => {
+                    if (!['close-panel', 'toggle-panel'].includes(e.target.id)) {
+                        stateManager.toggleCollapsed();
+                    }
+                };
             }
 
+            // 模式切换
+            const autoModeBtn = this.getCachedElement('#auto-mode-btn');
+            const manualModeBtn = this.getCachedElement('#manual-mode-btn');
+            const manualStartBtn = this.getCachedElement('#manual-start-btn');
+
+            if (autoModeBtn) autoModeBtn.onclick = () => stateManager.setAutoMode(true);
+            if (manualModeBtn) manualModeBtn.onclick = () => stateManager.setAutoMode(false);
+            if (manualStartBtn) manualStartBtn.onclick = () => topicProcessor.processUnread();
+
             // 速度选择
-            this.panel.querySelectorAll('input[name="speed"]').forEach(radio => {
-                radio.onchange = (e) => {
-                    if (e.target.checked) stateManager.setSpeed(e.target.value);
-                };
-            });
+            const speedRadios = this.panel?.querySelectorAll('input[name="speed"]');
+            if (speedRadios) {
+                speedRadios.forEach(radio => {
+                    radio.onchange = (e) => {
+                        if (e.target.checked) stateManager.setSpeed(e.target.value);
+                    };
+                });
+            }
 
             // 停止按钮
-            this.panel.querySelector('#stop-btn').onclick = () => {
-                if (state.isProcessing) {
-                    state.isProcessing = false;
-                    this.updateStatus('⏹️ 已停止', 'orange');
-                    this.updateStopButton(false);
-                }
-            };
+            const stopBtn = this.getCachedElement('#stop-btn');
+            if (stopBtn) {
+                stopBtn.onclick = () => {
+                    if (state.isProcessing) {
+                        state.isProcessing = false;
+                        this.updateStatus('⏹️ 已停止', 'orange');
+                        this.updateStopButton(false);
+                    }
+                };
+            }
 
             // 未读帖子浏览控制
-            const unreadCountInput = this.panel.querySelector('#unread-count');
-            const startBrowseBtn = this.panel.querySelector('#start-browse-btn');
-            const stopBrowseBtn = this.panel.querySelector('#stop-browse-btn');
+            const unreadCountInput = this.getCachedElement('#unread-count');
+            const concurrentThreadsInput = this.getCachedElement('#concurrent-threads');
+            const startBrowseBtn = this.getCachedElement('#start-browse-btn');
+            const stopBrowseBtn = this.getCachedElement('#stop-browse-btn');
 
             if (unreadCountInput) {
                 unreadCountInput.onchange = (e) => {
@@ -627,11 +785,22 @@
                 };
             }
 
-            if (startBrowseBtn) startBrowseBtn.onclick = () => unreadBrowser.start();
-            if (stopBrowseBtn) stopBrowseBtn.onclick = () => unreadBrowser.stop();
+            if (concurrentThreadsInput) {
+                concurrentThreadsInput.onchange = (e) => {
+                    state.concurrentThreads = Math.max(1, Math.min(10, parseInt(e.target.value) || 3));
+                    utils.storage.set('concurrentThreads', state.concurrentThreads);
+                };
+            }
+
+            if (startBrowseBtn) startBrowseBtn.onclick = () => coldTopicBrowser.start();
+            if (stopBrowseBtn) stopBrowseBtn.onclick = () => coldTopicBrowser.stop();
         },
 
         removePanel() {
+            // 清理元素缓存
+            this.clearElementCache();
+
+            // 移除当前面板
             if (this.panel) {
                 this.panel.remove();
                 this.panel = null;
@@ -644,13 +813,6 @@
         init() {
             if (!location.hostname.includes('linux.do')) return;
 
-            // 防止重复初始化
-            if (window.linuxDoHelperInitialized) {
-                console.log('LinuxDo 辅助工具已经初始化过，跳过重复初始化');
-                return;
-            }
-            window.linuxDoHelperInitialized = true;
-
             console.log('🚀 LinuxDo 辅助工具启动');
 
             stateManager.init();
@@ -660,28 +822,39 @@
 
             ui.createPanel();
 
-            const pageType = utils.getPageType();
-
             // 减少初始化延迟，让面板更快显示
             setTimeout(() => {
+                const pageType = utils.getPageType();
                 if (pageType === 'topic') {
                     if (state.isAutoMode) {
                         topicProcessor.checkAndProcess();
                     } else {
                         ui.updateStatus('✅ 手动模式已就绪', 'green');
                     }
-                } else if (pageType === 'list') {
-                    ui.updateStatus('✅ 未读帖子浏览功能已就绪', 'green');
                 } else {
                     ui.updateStatus('✅ LinuxDo 辅助工具已就绪', 'green');
                 }
-            }, 200);
+            }, CONSTANTS.DELAYS.STATUS_UPDATE);
 
             this.setupUrlMonitoring();
         },
 
+        cleanup() {
+            // 清理所有可能的遗留元素
+            ui.removePanel();
+
+            // 清理事件监听器
+            this.cleanupEventListeners();
+
+            // 清理元素缓存
+            ui.clearElementCache();
+
+            console.log('清理完成');
+        },
+
         setupUrlMonitoring() {
             let lastUrl = location.href;
+            let checkCount = 0;
 
             const checkUrlChange = () => {
                 if (location.href !== lastUrl && !state.isProcessing && !state.isBrowsing) {
@@ -699,62 +872,106 @@
                     lastUrl = location.href;
                     state.lastUrl = lastUrl;
 
-                    // 只有当话题ID发生变化时才重新初始化
-                    if (needReinit) {
-                        console.log('话题ID发生变化，重新初始化面板');
-                        state.lastTopicId = currentTopicId; // 只有在重新初始化时才更新话题ID
-                        ui.removePanel();
-                        // 重置初始化标志，允许重新初始化
-                        window.linuxDoHelperInitialized = false;
-                        window['linuxdo-helper-script'] = false;
-                        // 减少延迟，快速重新初始化
-                        setTimeout(() => this.init(), 300);
-                    } else {
-                        console.log('同一话题内切换，不重新初始化面板');
-                        // 同一话题内，只更新状态显示，不更新lastTopicId
-                        if (utils.getPageType() === 'topic') {
-                            if (state.isAutoMode) {
-                                setTimeout(() => {
-                                    if (!state.isProcessing) {
-                                        topicProcessor.checkAndProcess();
-                                    }
-                                }, 500);
-                            } else {
-                                ui.updateStatus('✅ 手动模式已就绪', 'green');
-                            }
+                    // 只更新状态，不重新初始化面板
+                    console.log('页面变化，更新状态');
+                    state.lastTopicId = currentTopicId;
+
+                    if (utils.getPageType() === 'topic') {
+                        if (state.isAutoMode) {
+                            setTimeout(() => {
+                                if (!state.isProcessing) {
+                                    topicProcessor.checkAndProcess();
+                                }
+                            }, CONSTANTS.DELAYS.AUTO_CHECK);
+                        } else {
+                            ui.updateStatus('✅ 手动模式已就绪', 'green');
                         }
+                    } else {
+                        ui.updateStatus('✅ LinuxDo 辅助工具已就绪', 'green');
                     }
+
+                    // 重置检查计数
+                    checkCount = 0;
+                } else {
+                    // 增加检查计数，用于动态调整检查间隔
+                    checkCount++;
                 }
             };
 
-            // 定时检查URL变化
-            setInterval(checkUrlChange, 1000);
+            // 智能URL监控 - 根据活动情况调整检查频率
+            const startUrlMonitoring = () => {
+                if (state.urlCheckInterval) {
+                    clearInterval(state.urlCheckInterval);
+                }
+
+                state.urlCheckInterval = setInterval(() => {
+                    checkUrlChange();
+
+                    // 如果长时间没有URL变化，降低检查频率
+                    if (checkCount > 30) { // 30秒无变化
+                        clearInterval(state.urlCheckInterval);
+                        // 切换到低频检查模式
+                        state.urlCheckInterval = setInterval(checkUrlChange, 5000); // 5秒检查一次
+                    }
+                }, 1000);
+            };
+
+            startUrlMonitoring();
+
+            // 添加事件监听器并记录，便于清理
+            const addEventListenerWithCleanup = (target, event, handler, options) => {
+                target.addEventListener(event, handler, options);
+                state.eventListeners.push({ target, event, handler, options });
+            };
 
             // 监听浏览器前进后退
-            window.addEventListener('popstate', () => {
+            addEventListenerWithCleanup(window, 'popstate', () => {
                 setTimeout(checkUrlChange, 100);
+                startUrlMonitoring(); // 重新启动高频监控
             });
 
             // 监听链接点击
-            document.addEventListener('click', (e) => {
+            addEventListenerWithCleanup(document, 'click', (e) => {
                 const link = e.target.closest('a');
                 if (link?.href?.includes('/t/topic/')) {
                     setTimeout(checkUrlChange, 500);
+                    startUrlMonitoring(); // 重新启动高频监控
                 }
             });
+
+            // 监听页面可见性变化，优化性能
+            addEventListenerWithCleanup(document, 'visibilitychange', () => {
+                if (document.hidden) {
+                    // 页面隐藏时停止URL检查
+                    if (state.urlCheckInterval) {
+                        clearInterval(state.urlCheckInterval);
+                        state.urlCheckInterval = null;
+                    }
+                } else {
+                    // 页面显示时恢复URL检查
+                    startUrlMonitoring();
+                }
+            });
+        },
+
+        // 清理事件监听器
+        cleanupEventListeners() {
+            state.eventListeners.forEach(({ target, event, handler, options }) => {
+                target.removeEventListener(event, handler, options);
+            });
+            state.eventListeners = [];
+
+            if (state.urlCheckInterval) {
+                clearInterval(state.urlCheckInterval);
+                state.urlCheckInterval = null;
+            }
         }
     };
 
-    // 启动应用 - 确保在页面加载完成后立即初始化
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => {
-            // 稍微延迟以确保页面元素完全加载
-            setTimeout(() => app.init(), 100);
-        });
-    } else {
-        // 页面已经加载完成，立即初始化
-        setTimeout(() => app.init(), 100);
-    }
+
+
+    // 启动应用
+    app.init();
 
     // 暴露到全局作用域（用于调试）
     window.linuxDoHelper = {
@@ -763,7 +980,7 @@
         utils,
         stateManager,
         topicProcessor,
-        unreadBrowser,
+        coldTopicBrowser,
         ui,
         app
     };
